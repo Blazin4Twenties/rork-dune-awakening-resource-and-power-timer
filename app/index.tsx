@@ -48,6 +48,7 @@ import * as Notifications from 'expo-notifications';
 import { Resource, ResourceCategory, TimerCategory, TimerReminder } from "@/types/resource";
 import DebugPanel from "@/components/DebugPanel";
 import UpdatesPanel from "@/components/UpdatesPanel";
+import OnboardingScreen from "@/components/OnboardingScreen";
 
 const { width } = Dimensions.get("window");
 
@@ -56,7 +57,7 @@ const DUNE_BG = 'https://images.unsplash.com/photo-1682686581030-7fa4ea2b96c3?w=
 export default function DuneResourceManager() {
   const { addLog, isFunctionPaused, getPausedMessage } = useDebug();
   const { hasNewUpdates } = useUpdates();
-  const { isOnline } = useAppStatus();
+  const { isOnline, hasAcceptedTerms, isLoadingTerms } = useAppStatus();
   
   const {
     resources,
@@ -447,6 +448,28 @@ export default function DuneResourceManager() {
 
   const activeTimers = timers.filter(t => t.isActive);
   const expiredTimers = timers.filter(t => !t.isActive);
+
+  // Show onboarding screen if terms haven't been accepted
+  if (!isLoadingTerms && !hasAcceptedTerms) {
+    return <OnboardingScreen />;
+  }
+
+  // Show loading state while checking terms status
+  if (isLoadingTerms) {
+    return (
+      <View style={styles.loadingContainer}>
+        <LinearGradient
+          colors={['rgba(10,10,10,0.85)', 'rgba(26,26,46,0.9)', 'rgba(22,33,62,0.95)']}
+          style={styles.gradient}
+        >
+          <View style={styles.loadingContent}>
+            <Activity size={48} color="#FFB800" />
+            <Text style={styles.loadingText}>Loading...</Text>
+          </View>
+        </LinearGradient>
+      </View>
+    );
+  }
 
   return (
     <ImageBackground source={{ uri: DUNE_BG }} style={styles.bgImage} resizeMode="cover">
@@ -1698,5 +1721,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600' as const,
     letterSpacing: 0.5,
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  loadingContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 20,
+  },
+  loadingText: {
+    fontSize: 18,
+    color: '#FFB800',
+    fontWeight: '600' as const,
+    letterSpacing: 2,
   },
 });
