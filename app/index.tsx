@@ -55,6 +55,7 @@ const { width } = Dimensions.get("window");
 const DUNE_BG = 'https://images.unsplash.com/photo-1682686581030-7fa4ea2b96c3?w=1920&q=80';
 
 export default function DuneResourceManager() {
+  // Call all hooks first, before any conditional returns
   const { addLog, isFunctionPaused, getPausedMessage } = useDebug();
   const { hasNewUpdates } = useUpdates();
   const { isOnline, hasAcceptedTerms, isLoadingTerms } = useAppStatus();
@@ -449,11 +450,7 @@ export default function DuneResourceManager() {
   const activeTimers = timers.filter(t => t.isActive);
   const expiredTimers = timers.filter(t => !t.isActive);
 
-  // Show onboarding screen if terms haven't been accepted
-  if (!isLoadingTerms && !hasAcceptedTerms) {
-    return <OnboardingScreen />;
-  }
-
+  // Conditional returns must come after all hooks
   // Show loading state while checking terms status
   if (isLoadingTerms) {
     return (
@@ -469,6 +466,11 @@ export default function DuneResourceManager() {
         </LinearGradient>
       </View>
     );
+  }
+
+  // Show onboarding screen if terms haven't been accepted
+  if (!hasAcceptedTerms) {
+    return <OnboardingScreen />;
   }
 
   return (
