@@ -101,7 +101,10 @@ export default function DuneResourceManager() {
   const [reminderMessage, setReminderMessage] = useState("");
   
   useEffect(() => {
-    addLog('system', 'App Started', 'Dune Resource Manager initialized');
+    // Only log on initial mount
+    const logTimeout = setTimeout(() => {
+      addLog('system', 'App Started', 'Dune Resource Manager initialized');
+    }, 100);
     
     // Set up notification response listener to open updates tab
     const subscription = Notifications.addNotificationResponseReceivedListener(response => {
@@ -111,9 +114,10 @@ export default function DuneResourceManager() {
     });
 
     return () => {
+      clearTimeout(logTimeout);
       subscription.remove();
     };
-  }, []); // Remove addLog dependency to prevent infinite loop
+  }, []); // Empty dependency array - only run once on mount
 
   const formatCountdown = (ms: number) => {
     if (ms <= 0) return "EXPIRED";
