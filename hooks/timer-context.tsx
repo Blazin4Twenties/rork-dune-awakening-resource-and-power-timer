@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import createContextHook from "@nkzw/create-context-hook";
 import { Timer } from "@/types/resource";
 import * as Notifications from "expo-notifications";
-import { Platform, AppState } from "react-native";
+import { Platform, AppState, Alert } from "react-native";
 
 const TIMERS_KEY = "dune_timers";
 const TIMER_NOTIFICATIONS_KEY = "dune_timer_notifications";
@@ -32,6 +32,7 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const notificationHistory = useRef<Map<string, TimerNotificationRecord>>(new Map());
   const appStateRef = useRef(AppState.currentState);
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
 
   const requestNotificationPermissions = useCallback(async () => {
     if (Platform.OS === "web") return;
@@ -83,19 +84,36 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     }
   }, []);
 
-  const sendInAppNotification = useCallback((title: string, body: string) => {
-    const notification = {
-      id: Date.now().toString(),
-      title,
-      body,
-      timestamp: Date.now()
-    };
-    setInAppNotifications(prev => [...prev, notification]);
-    
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-      setInAppNotifications(prev => prev.filter(n => n.id !== notification.id));
-    }, 5000);
+  const sendInAppNotification = useCallback((title: string, body: string, requiresInteraction: boolean = false) => {
+    if (requiresInteraction) {
+      // Show alert that requires user interaction
+      Alert.alert(
+        title,
+        body,
+        [
+          {
+            text: "OK",
+            onPress: () => console.log("Timer reminder acknowledged"),
+            style: "default"
+          }
+        ],
+        { cancelable: false }
+      );
+    } else {
+      // Show regular in-app notification
+      const notification = {
+        id: Date.now().toString(),
+        title,
+        body,
+        timestamp: Date.now()
+      };
+      setInAppNotifications(prev => [...prev, notification]);
+      
+      // Auto-remove after 5 seconds
+      setTimeout(() => {
+        setInAppNotifications(prev => prev.filter(n => n.id !== notification.id));
+      }, 5000);
+    }
   }, []);
 
   const dismissInAppNotification = useCallback((id: string) => {
@@ -106,8 +124,8 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     if (!notificationsEnabled) return;
 
     const now = Date.now();
-    const isAppActive = appStateRef.current === 'active';
-    const pendingNotifications: { title: string; body: string; priority: number; sound: boolean }[] = [];
+    const appIsActive = isAppActive;
+    const pendingNotifications: { title: string; body: string; priority: number; sound: boolean; requiresInteraction?: boolean }[] = [];
 
     for (const timer of timers) {
       if (!timer.isActive) continue;
@@ -137,7 +155,8 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
             title: `⏱️ ${timer.name} Reminder`,
             body: timer.reminder.message || `${timeStr.trim()} remaining on your timer`,
             priority: 2,
-            sound: true
+            sound: true,
+            requiresInteraction: true
           });
           
           notificationHistory.current.set(timerKey, {
@@ -212,9 +231,9 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
 
     // Send notifications based on app state
     for (const notification of pendingNotifications) {
-      if (isAppActive) {
-        // App is in foreground - show in-app notification
-        sendInAppNotification(notification.title, notification.body);
+      if (appIsActive) {
+        // App is in foreground - show in-app notification or alert
+        sendInAppNotification(notification.title, notification.body, notification.requiresInteraction || false);
       } else if (Platform.OS !== "web") {
         // App is in background or closed - send system notification
         await Notifications.scheduleNotificationAsync({
@@ -229,7 +248,7 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
         });
       }
     }
-  }, [timers, notificationsEnabled, sendInAppNotification]);
+  }, [timers, notificationsEnabled, sendInAppNotification, isAppActive]);
 
   useEffect(() => {
     // Update current time every second for live countdown
@@ -360,6 +379,7 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     // Track app state changes
     const subscription = AppState.addEventListener('change', nextAppState => {
       appStateRef.current = nextAppState;
+      setIsAppActive(nextAppState === 'active');
     });
     
     return () => {
