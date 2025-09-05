@@ -21,6 +21,7 @@ Notifications.setNotificationHandler({
 interface TimerNotificationRecord {
   lastNotified: number;
   thresholdPassed: boolean;
+  lastReminderSent?: number; // Track last reminder notification
 }
 
 export const [TimerProvider, useTimers] = createContextHook(() => {
@@ -93,6 +94,38 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
       const timerKey = `timer-${timer.id}`;
       const history = notificationHistory.current.get(timerKey);
 
+      // Check for custom reminder notifications
+      if (timer.reminder?.enabled && timer.reminder.interval > 0 && remaining > 0) {
+        const lastReminder = history?.lastReminderSent || timer.startTime;
+        const timeSinceLastReminder = now - lastReminder;
+        
+        if (timeSinceLastReminder >= timer.reminder.interval) {
+          const days = Math.floor(remaining / 86400000);
+          const hours = Math.floor((remaining % 86400000) / 3600000);
+          const minutes = Math.floor((remaining % 3600000) / 60000);
+          const seconds = Math.floor((remaining % 60000) / 1000);
+          
+          let timeStr = "";
+          if (days > 0) timeStr += `${days}d `;
+          if (hours > 0) timeStr += `${hours}h `;
+          if (minutes > 0) timeStr += `${minutes}m `;
+          if (seconds > 0 && days === 0 && hours === 0) timeStr += `${seconds}s`;
+          
+          pendingNotifications.push({
+            title: `⏱️ ${timer.name} Reminder`,
+            body: timer.reminder.message || `${timeStr.trim()} remaining on your timer`,
+            priority: 2,
+            sound: true
+          });
+          
+          notificationHistory.current.set(timerKey, {
+            lastNotified: history?.lastNotified || now,
+            thresholdPassed: history?.thresholdPassed || false,
+            lastReminderSent: now
+          });
+        }
+      }
+
       if (remaining <= 0) {
         // Timer expired
         if (!history || now - history.lastNotified > 300000) { // Notify once every 5 minutes
@@ -104,7 +137,8 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
           });
           notificationHistory.current.set(timerKey, {
             lastNotified: now,
-            thresholdPassed: true
+            thresholdPassed: true,
+            lastReminderSent: history?.lastReminderSent
           });
         }
       } else if (remaining <= timer.threshold) {
@@ -138,13 +172,18 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
           
           notificationHistory.current.set(timerKey, {
             lastNotified: now,
-            thresholdPassed: true
+            thresholdPassed: true,
+            lastReminderSent: history?.lastReminderSent
           });
         }
       } else {
-        // Above threshold, clear history if it exists
+        // Above threshold, keep reminder history but clear threshold history
         if (history?.thresholdPassed) {
-          notificationHistory.current.delete(timerKey);
+          notificationHistory.current.set(timerKey, {
+            lastNotified: history.lastNotified,
+            thresholdPassed: false,
+            lastReminderSent: history.lastReminderSent
+          });
         }
       }
     }

@@ -25,7 +25,7 @@ import {
   Package,
   MoreHorizontal,
   RefreshCw,
-
+  BellRing,
   Timer as TimerIcon,
   Droplets,
   Cpu,
@@ -43,7 +43,7 @@ import { useTimers } from "@/hooks/timer-context";
 import { useDebug } from "@/hooks/debug-context";
 import { useUpdates } from "@/hooks/updates-context";
 import * as Notifications from 'expo-notifications';
-import { Resource, ResourceCategory, TimerCategory } from "@/types/resource";
+import { Resource, ResourceCategory, TimerCategory, TimerReminder } from "@/types/resource";
 import DebugPanel from "@/components/DebugPanel";
 import UpdatesPanel from "@/components/UpdatesPanel";
 
@@ -92,6 +92,10 @@ export default function DuneResourceManager() {
   const [timerSeconds, setTimerSeconds] = useState("");
   const [timerThresholdMinutes, setTimerThresholdMinutes] = useState("");
   const [timerCategory, setTimerCategory] = useState<TimerCategory>("generator");
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [reminderInterval, setReminderInterval] = useState("5"); // Default 5 minutes
+  const [reminderIntervalUnit, setReminderIntervalUnit] = useState<"minutes" | "hours" | "days">("minutes");
+  const [reminderMessage, setReminderMessage] = useState("");
   
   useEffect(() => {
     addLog('system', 'App Started', 'Dune Resource Manager initialized');
@@ -199,6 +203,29 @@ export default function DuneResourceManager() {
       return;
     }
 
+    // Calculate reminder interval in milliseconds
+    let reminderIntervalMs = 0;
+    if (reminderEnabled) {
+      const intervalValue = parseInt(reminderInterval) || 5;
+      switch (reminderIntervalUnit) {
+        case "minutes":
+          reminderIntervalMs = intervalValue * 60 * 1000;
+          break;
+        case "hours":
+          reminderIntervalMs = intervalValue * 60 * 60 * 1000;
+          break;
+        case "days":
+          reminderIntervalMs = intervalValue * 24 * 60 * 60 * 1000;
+          break;
+      }
+    }
+
+    const reminder: TimerReminder | undefined = reminderEnabled ? {
+      interval: reminderIntervalMs,
+      message: reminderMessage || `Timer reminder: ${timerName}`,
+      enabled: true
+    } : undefined;
+
     if (editingTimerId) {
       updateTimer(editingTimerId, days, hours, minutes, seconds);
       addLog('timer', 'Timer Updated', `${timerName} updated`);
@@ -209,6 +236,7 @@ export default function DuneResourceManager() {
           threshold: thresholdMinutes * 60 * 1000,
           category: timerCategory,
           duration: 0, // Will be calculated in addTimer
+          reminder
         },
         days,
         hours,
@@ -216,7 +244,8 @@ export default function DuneResourceManager() {
         seconds
       );
       const totalTime = `${days}d ${hours}h ${minutes}m ${seconds}s`;
-      addLog('timer', 'Timer Started', `${timerName} set for ${totalTime}`);
+      const reminderInfo = reminderEnabled ? ` with reminders every ${reminderInterval} ${reminderIntervalUnit}` : '';
+      addLog('timer', 'Timer Started', `${timerName} set for ${totalTime}${reminderInfo}`);
     }
 
     if (Platform.OS !== "web") {
@@ -225,7 +254,7 @@ export default function DuneResourceManager() {
 
     setTimerModalVisible(false);
     resetTimerForm();
-  }, [timerName, timerDays, timerHours, timerMinutes, timerSeconds, timerThresholdMinutes, timerCategory, editingTimerId, addTimer, updateTimer, isFunctionPaused, getPausedMessage, addLog]);
+  }, [timerName, timerDays, timerHours, timerMinutes, timerSeconds, timerThresholdMinutes, timerCategory, editingTimerId, reminderEnabled, reminderInterval, reminderIntervalUnit, reminderMessage, addTimer, updateTimer, isFunctionPaused, getPausedMessage, addLog]);
 
   const resetResourceForm = () => {
     setResourceName("");
@@ -244,6 +273,10 @@ export default function DuneResourceManager() {
     setTimerThresholdMinutes("5");
     setTimerCategory("generator");
     setEditingTimerId(null);
+    setReminderEnabled(false);
+    setReminderInterval("5");
+    setReminderIntervalUnit("minutes");
+    setReminderMessage("");
   };
 
   const openEditResourceModal = (resource: Resource) => {
@@ -280,6 +313,31 @@ export default function DuneResourceManager() {
     setTimerSeconds(seconds > 0 ? seconds.toString() : "");
     setTimerThresholdMinutes(Math.floor(timer.threshold / 60000).toString());
     setTimerCategory(timer.category);
+    
+    // Set reminder settings if they exist
+    if (timer.reminder) {
+      setReminderEnabled(timer.reminder.enabled);
+      setReminderMessage(timer.reminder.message);
+      
+      // Convert interval back to user-friendly units
+      const intervalMs = timer.reminder.interval;
+      if (intervalMs >= 24 * 60 * 60 * 1000 && intervalMs % (24 * 60 * 60 * 1000) === 0) {
+        setReminderInterval((intervalMs / (24 * 60 * 60 * 1000)).toString());
+        setReminderIntervalUnit("days");
+      } else if (intervalMs >= 60 * 60 * 1000 && intervalMs % (60 * 60 * 1000) === 0) {
+        setReminderInterval((intervalMs / (60 * 60 * 1000)).toString());
+        setReminderIntervalUnit("hours");
+      } else {
+        setReminderInterval((intervalMs / (60 * 1000)).toString());
+        setReminderIntervalUnit("minutes");
+      }
+    } else {
+      setReminderEnabled(false);
+      setReminderInterval("5");
+      setReminderIntervalUnit("minutes");
+      setReminderMessage("");
+    }
+    
     setTimerModalVisible(true);
     
     if (Platform.OS !== "web") {
@@ -529,6 +587,14 @@ export default function DuneResourceManager() {
                                   </View>
                                 </View>
                               </View>
+                              {timer.reminder?.enabled && (
+                                <View style={styles.reminderIndicator}>
+                                  <BellRing size={14} color="#FFB800" />
+                                  <Text style={styles.reminderIndicatorText}>
+                                    Reminders ON
+                                  </Text>
+                                </View>
+                              )}
                               <View style={styles.cardBody}>
                                 <Text style={[
                                   styles.countdown,
@@ -984,6 +1050,66 @@ export default function DuneResourceManager() {
                       keyboardType="numeric"
                     />
 
+                    <View style={styles.reminderSection}>
+                      <TouchableOpacity
+                        style={styles.reminderToggle}
+                        onPress={() => setReminderEnabled(!reminderEnabled)}
+                      >
+                        <View style={[styles.checkbox, reminderEnabled && styles.checkboxActive]}>
+                          {reminderEnabled && <Bell size={16} color="#000" />}
+                        </View>
+                        <Text style={styles.reminderToggleText}>ENABLE REMINDERS</Text>
+                      </TouchableOpacity>
+
+                      {reminderEnabled && (
+                        <>
+                          <Text style={styles.inputLabel}>REMINDER INTERVAL</Text>
+                          <View style={styles.reminderIntervalRow}>
+                            <TextInput
+                              style={[styles.input, styles.reminderIntervalInput]}
+                              placeholder="5"
+                              placeholderTextColor="#666"
+                              value={reminderInterval}
+                              onChangeText={setReminderInterval}
+                              keyboardType="numeric"
+                            />
+                            <View style={styles.reminderUnitPicker}>
+                              {(["minutes", "hours", "days"] as const).map((unit) => (
+                                <TouchableOpacity
+                                  key={unit}
+                                  style={[
+                                    styles.reminderUnitOption,
+                                    reminderIntervalUnit === unit && styles.reminderUnitOptionActive,
+                                  ]}
+                                  onPress={() => setReminderIntervalUnit(unit)}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.reminderUnitText,
+                                      reminderIntervalUnit === unit && styles.reminderUnitTextActive,
+                                    ]}
+                                  >
+                                    {unit.toUpperCase()}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+
+                          <Text style={styles.inputLabel}>REMINDER MESSAGE (OPTIONAL)</Text>
+                          <TextInput
+                            style={styles.input}
+                            placeholder="Custom reminder message..."
+                            placeholderTextColor="#666"
+                            value={reminderMessage}
+                            onChangeText={setReminderMessage}
+                            multiline
+                            numberOfLines={2}
+                          />
+                        </>
+                      )}
+                    </View>
+
                     <View style={styles.modalButtons}>
                       <TouchableOpacity
                         style={styles.cancelButton}
@@ -1435,5 +1561,89 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700" as const,
     letterSpacing: 1,
+  },
+  reminderSection: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  reminderToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#666',
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxActive: {
+    backgroundColor: '#FFB800',
+    borderColor: '#FFB800',
+  },
+  reminderToggleText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700' as const,
+    letterSpacing: 1,
+  },
+  reminderIntervalRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  reminderIntervalInput: {
+    flex: 0.3,
+    marginBottom: 0,
+  },
+  reminderUnitPicker: {
+    flex: 0.7,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  reminderUnitOption: {
+    flex: 1,
+    backgroundColor: 'rgba(42,42,62,0.5)',
+    borderRadius: 8,
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  reminderUnitOptionActive: {
+    backgroundColor: 'rgba(255,184,0,0.2)',
+    borderColor: '#FFB800',
+  },
+  reminderUnitText: {
+    color: '#666',
+    fontSize: 11,
+    fontWeight: '700' as const,
+    letterSpacing: 1,
+  },
+  reminderUnitTextActive: {
+    color: '#FFB800',
+  },
+  reminderIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(255,184,0,0.1)',
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+  },
+  reminderIndicatorText: {
+    color: '#FFB800',
+    fontSize: 11,
+    fontWeight: '600' as const,
+    letterSpacing: 0.5,
   },
 });

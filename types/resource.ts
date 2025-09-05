@@ -9,6 +9,12 @@ export interface Resource {
   category: ResourceCategory;
 }
 
+export interface TimerReminder {
+  interval: number; // Interval in ms (e.g., 5 minutes, 1 hour, etc.)
+  message: string; // Custom message for the reminder
+  enabled: boolean;
+}
+
 export interface Timer {
   id: string;
   name: string;
@@ -18,4 +24,5 @@ export interface Timer {
   threshold: number; // Time in ms when to trigger low warning
   category: TimerCategory;
   isActive: boolean;
+  reminder?: TimerReminder; // Optional reminder settings
 }
