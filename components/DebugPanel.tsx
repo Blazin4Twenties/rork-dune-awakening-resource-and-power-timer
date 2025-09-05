@@ -249,10 +249,9 @@ export default function DebugPanel() {
               <TouchableOpacity
                 style={styles.addUpdateButton}
                 onPress={() => {
-                  const date = new Date().toLocaleDateString();
                   addUpdate(
-                    'Timer Updated',
-                    `Timer has been updated on ${date} due to an unexpected error in the coding. The countdown functionality has been fixed and should now work properly.`,
+                    'Testing Update/Information',
+                    'This is a test notification being sent to ensure the UI functions and picks up the broadcast correctly!',
                     'update',
                     'Developer'
                   );
