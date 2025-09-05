@@ -5,7 +5,7 @@ export interface Resource {
   id: string;
   name: string;
   value: number;
-  threshold: number;
+  needed: number; // Total resources needed (replaces threshold)
   category: ResourceCategory;
 }
 

@@ -85,7 +85,7 @@ export default function DuneResourceManager() {
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [resourceName, setResourceName] = useState("");
   const [resourceValue, setResourceValue] = useState("");
-  const [resourceThreshold, setResourceThreshold] = useState("");
+  const [resourceNeeded, setResourceNeeded] = useState("");
   const [resourceCategory, setResourceCategory] = useState<ResourceCategory>("resources");
   
   const [timerModalVisible, setTimerModalVisible] = useState(false);
@@ -147,17 +147,17 @@ export default function DuneResourceManager() {
       return;
     }
     
-    if (!resourceName || !resourceValue || !resourceThreshold) {
+    if (!resourceName || !resourceValue || !resourceNeeded) {
       Alert.alert("Error", "Please fill all fields");
       addLog('error', 'Add Resource Failed', 'Missing required fields');
       return;
     }
 
     const value = parseInt(resourceValue);
-    const threshold = parseInt(resourceThreshold);
+    const needed = parseInt(resourceNeeded);
 
-    if (isNaN(value) || isNaN(threshold)) {
-      Alert.alert("Error", "Value and threshold must be numbers");
+    if (isNaN(value) || isNaN(needed)) {
+      Alert.alert("Error", "Value and resources needed must be numbers");
       addLog('error', 'Add Resource Failed', 'Invalid number values');
       return;
     }
@@ -166,18 +166,18 @@ export default function DuneResourceManager() {
       updateResource(editingResource.id, {
         name: resourceName,
         value,
-        threshold,
+        needed,
         category: resourceCategory,
       });
-      addLog('resource', 'Resource Updated', `${resourceName} updated`, { value, threshold });
+      addLog('resource', 'Resource Updated', `${resourceName} updated`, { value, needed });
     } else {
       addResource({
         name: resourceName,
         value,
-        threshold,
+        needed,
         category: resourceCategory,
       });
-      addLog('resource', 'Resource Added', `${resourceName} added`, { value, threshold });
+      addLog('resource', 'Resource Added', `${resourceName} added`, { value, needed });
     }
 
     if (Platform.OS !== "web") {
@@ -186,7 +186,7 @@ export default function DuneResourceManager() {
 
     setModalVisible(false);
     resetResourceForm();
-  }, [resourceName, resourceValue, resourceThreshold, resourceCategory, editingResource, addResource, updateResource, isFunctionPaused, getPausedMessage, addLog]);
+  }, [resourceName, resourceValue, resourceNeeded, resourceCategory, editingResource, addResource, updateResource, isFunctionPaused, getPausedMessage, addLog]);
 
   const handleAddTimer = useCallback(() => {
     if (isFunctionPaused('addTimer')) {
@@ -268,7 +268,7 @@ export default function DuneResourceManager() {
   const resetResourceForm = () => {
     setResourceName("");
     setResourceValue("");
-    setResourceThreshold("");
+    setResourceNeeded("");
     setResourceCategory("resources");
     setEditingResource(null);
   };
@@ -296,7 +296,7 @@ export default function DuneResourceManager() {
     setEditingResource(resource);
     setResourceName(resource.name);
     setResourceValue(resource.value.toString());
-    setResourceThreshold(resource.threshold.toString());
+    setResourceNeeded(resource.needed.toString());
     setResourceCategory(resource.category);
     setModalVisible(true);
     if (Platform.OS !== "web") {
@@ -769,8 +769,8 @@ export default function DuneResourceManager() {
                           </Text>
                         </View>
                         {categoryResources.map((resource) => {
-                          const isLow = resource.value <= resource.threshold;
-                          const percentage = Math.min((resource.value / (resource.threshold * 2)) * 100, 100);
+                          const isLow = resource.value < resource.needed;
+                          const percentage = Math.min((resource.value / resource.needed) * 100, 100);
                           
                           return (
                             <TouchableOpacity
@@ -808,7 +808,7 @@ export default function DuneResourceManager() {
                                     {resource.value}
                                   </Text>
                                   <Text style={styles.resourceDivider}>/</Text>
-                                  <Text style={styles.resourceThreshold}>{resource.threshold}</Text>
+                                  <Text style={styles.resourceThreshold}>{resource.needed}</Text>
                                   {isLow && (
                                     <View style={styles.warningBadge}>
                                       <AlertTriangle size={14} color="#FFF" />
@@ -941,10 +941,10 @@ export default function DuneResourceManager() {
 
                     <TextInput
                       style={styles.input}
-                      placeholder="Low Threshold"
+                      placeholder="Resources Needed"
                       placeholderTextColor="#666"
-                      value={resourceThreshold}
-                      onChangeText={setResourceThreshold}
+                      value={resourceNeeded}
+                      onChangeText={setResourceNeeded}
                       keyboardType="numeric"
                     />
 
