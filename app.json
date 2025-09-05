@@ -15,7 +15,18 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.rork.dune-awakening-resource-and-power-timer"
+      "bundleIdentifier": "app.rork.dune-awakening-resource-and-power-timer",
+      "entitlements": {
+        "com": {
+          "apple": {
+            "developer": {
+              "networking": {
+                "wifi-info": true
+              }
+            }
+          }
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {

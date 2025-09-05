@@ -42,6 +42,8 @@ import { useResources } from "@/hooks/resource-context";
 import { useTimers } from "@/hooks/timer-context";
 import { useDebug } from "@/hooks/debug-context";
 import { useUpdates } from "@/hooks/updates-context";
+import { useAppStatus } from "@/hooks/app-status-context";
+import InAppNotifications from "@/components/InAppNotifications";
 import * as Notifications from 'expo-notifications';
 import { Resource, ResourceCategory, TimerCategory, TimerReminder } from "@/types/resource";
 import DebugPanel from "@/components/DebugPanel";
@@ -54,6 +56,7 @@ const DUNE_BG = 'https://images.unsplash.com/photo-1682686581030-7fa4ea2b96c3?w=
 export default function DuneResourceManager() {
   const { addLog, isFunctionPaused, getPausedMessage } = useDebug();
   const { hasNewUpdates } = useUpdates();
+  const { isOnline } = useAppStatus();
   
   const {
     resources,
@@ -449,6 +452,12 @@ export default function DuneResourceManager() {
       >
         <SafeAreaView style={styles.safeArea}>
           <View style={styles.content}>
+            <View style={styles.statusBar}>
+              <View style={[styles.statusIndicator, isOnline ? styles.statusOnline : styles.statusOffline]}>
+                <View style={[styles.statusDot, isOnline ? styles.dotOnline : styles.dotOffline]} />
+                <Text style={styles.statusText}>{isOnline ? "ONLINE" : "OFFLINE"}</Text>
+              </View>
+            </View>
             <View style={styles.header}>
               <LinearGradient
                 colors={['rgba(255,184,0,0.1)', 'rgba(255,184,0,0.05)', 'transparent']}
@@ -1138,6 +1147,7 @@ export default function DuneResourceManager() {
           </Modal>
         </SafeAreaView>
       </LinearGradient>
+      <InAppNotifications />
       <DebugPanel />
     </ImageBackground>
   );
@@ -1158,6 +1168,45 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 20,
+  },
+  statusBar: {
+    position: "absolute",
+    top: 10,
+    left: 20,
+    zIndex: 100,
+  },
+  statusIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,30,46,0.8)",
+    borderWidth: 1,
+  },
+  statusOnline: {
+    borderColor: "rgba(52,199,89,0.3)",
+  },
+  statusOffline: {
+    borderColor: "rgba(255,59,48,0.3)",
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  dotOnline: {
+    backgroundColor: "#34C759",
+  },
+  dotOffline: {
+    backgroundColor: "#FF3B30",
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "700" as const,
+    color: "#888",
+    letterSpacing: 1,
   },
   header: {
     marginBottom: 24,

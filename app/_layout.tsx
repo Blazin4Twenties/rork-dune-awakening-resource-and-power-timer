@@ -7,6 +7,7 @@ import { ResourceProvider } from "@/hooks/resource-context";
 import { TimerProvider } from "@/hooks/timer-context";
 import { DebugProvider } from "@/hooks/debug-context";
 import { UpdatesProvider } from "@/hooks/updates-context";
+import { AppStatusProvider } from "@/hooks/app-status-context";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -29,15 +30,17 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <DebugProvider>
-          <UpdatesProvider>
-            <ResourceProvider>
-              <TimerProvider>
-                <RootLayoutNav />
-              </TimerProvider>
-            </ResourceProvider>
-          </UpdatesProvider>
-        </DebugProvider>
+        <AppStatusProvider>
+          <DebugProvider>
+            <UpdatesProvider>
+              <ResourceProvider>
+                <TimerProvider>
+                  <RootLayoutNav />
+                </TimerProvider>
+              </ResourceProvider>
+            </UpdatesProvider>
+          </DebugProvider>
+        </AppStatusProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>
   );

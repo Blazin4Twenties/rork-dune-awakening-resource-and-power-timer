@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import createContextHook from "@nkzw/create-context-hook";
 import { Timer } from "@/types/resource";
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { Platform, AppState } from "react-native";
 
 const TIMERS_KEY = "dune_timers";
 const TIMER_NOTIFICATIONS_KEY = "dune_timer_notifications";
@@ -28,8 +28,10 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
   const [timers, setTimers] = useState<Timer[]>([]);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [inAppNotifications, setInAppNotifications] = useState<{ id: string; title: string; body: string; timestamp: number }[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const notificationHistory = useRef<Map<string, TimerNotificationRecord>>(new Map());
+  const appStateRef = useRef(AppState.currentState);
 
   const requestNotificationPermissions = useCallback(async () => {
     if (Platform.OS === "web") return;
@@ -81,10 +83,30 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     }
   }, []);
 
+  const sendInAppNotification = useCallback((title: string, body: string) => {
+    const notification = {
+      id: Date.now().toString(),
+      title,
+      body,
+      timestamp: Date.now()
+    };
+    setInAppNotifications(prev => [...prev, notification]);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+      setInAppNotifications(prev => prev.filter(n => n.id !== notification.id));
+    }, 5000);
+  }, []);
+
+  const dismissInAppNotification = useCallback((id: string) => {
+    setInAppNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
   const checkTimerNotifications = useCallback(async () => {
-    if (!notificationsEnabled || Platform.OS === "web") return;
+    if (!notificationsEnabled) return;
 
     const now = Date.now();
+    const isAppActive = appStateRef.current === 'active';
     const pendingNotifications: { title: string; body: string; priority: number; sound: boolean }[] = [];
 
     for (const timer of timers) {
@@ -188,19 +210,26 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
       }
     }
 
-    // Send notifications
+    // Send notifications based on app state
     for (const notification of pendingNotifications) {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: notification.title,
-          body: notification.body,
-          sound: notification.sound,
-          priority: notification.priority === 1 ? 'high' : 'default',
-        },
-        trigger: null,
-      });
+      if (isAppActive) {
+        // App is in foreground - show in-app notification
+        sendInAppNotification(notification.title, notification.body);
+      } else if (Platform.OS !== "web") {
+        // App is in background or closed - send system notification
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: notification.title,
+            body: notification.body,
+            sound: notification.sound,
+            priority: notification.priority === 1 ? 'high' : 'default',
+            data: { type: 'timer-reminder' },
+          },
+          trigger: null,
+        });
+      }
     }
-  }, [timers, notificationsEnabled]);
+  }, [timers, notificationsEnabled, sendInAppNotification]);
 
   useEffect(() => {
     // Update current time every second for live countdown
@@ -327,16 +356,89 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
   useEffect(() => {
     loadData();
     requestNotificationPermissions();
+    
+    // Track app state changes
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      appStateRef.current = nextAppState;
+    });
+    
+    return () => {
+      subscription.remove();
+    };
   }, [loadData, requestNotificationPermissions]);
+
+  // Schedule background notifications for reminders when app is closed
+  const scheduleBackgroundReminders = useCallback(async (timer: Timer) => {
+    if (!timer.reminder?.enabled || Platform.OS === "web") return;
+    
+    // Cancel existing scheduled notifications for this timer
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    
+    const now = Date.now();
+    const endTime = timer.endTime;
+    const interval = timer.reminder.interval;
+    
+    // Schedule up to 10 reminder notifications
+    const maxReminders = 10;
+    let nextReminderTime = now + interval;
+    let scheduledCount = 0;
+    
+    while (nextReminderTime < endTime && scheduledCount < maxReminders) {
+      const remaining = endTime - nextReminderTime;
+      const hours = Math.floor(remaining / 3600000);
+      const minutes = Math.floor((remaining % 3600000) / 60000);
+      
+      let timeStr = "";
+      if (hours > 0) timeStr += `${hours}h `;
+      if (minutes > 0) timeStr += `${minutes}m`;
+      
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: `⏱️ ${timer.name} Reminder`,
+          body: timer.reminder.message || `${timeStr.trim()} remaining on your timer`,
+          sound: true,
+          data: { type: 'timer-reminder', timerId: timer.id },
+        },
+        trigger: {
+          date: nextReminderTime,
+        } as Notifications.DateTriggerInput,
+      });
+      
+      nextReminderTime += interval;
+      scheduledCount++;
+    }
+  }, []);
+
+  // Update addTimer to schedule background notifications
+  const addTimerWithBackgroundNotifications = useCallback(async (timer: Omit<Timer, "id" | "startTime" | "endTime" | "isActive">, days: number, hours: number, minutes: number, seconds: number) => {
+    const duration = ((days * 24 + hours) * 60 + minutes) * 60 * 1000 + seconds * 1000;
+    const newTimer: Timer = {
+      ...timer,
+      id: Date.now().toString(),
+      startTime: Date.now(),
+      endTime: Date.now() + duration,
+      duration,
+      isActive: true,
+    };
+    const updatedTimers = [...timers, newTimer];
+    saveTimers(updatedTimers);
+    
+    // Schedule background notifications if reminder is enabled
+    if (newTimer.reminder?.enabled) {
+      await scheduleBackgroundReminders(newTimer);
+    }
+  }, [timers, saveTimers, scheduleBackgroundReminders]);
 
   return useMemo(() => ({
     timers,
     currentTime,
-    addTimer,
+    addTimer: addTimerWithBackgroundNotifications,
     updateTimer,
     deleteTimer,
     resetTimer,
     notificationsEnabled,
     toggleNotifications,
-  }), [timers, currentTime, addTimer, updateTimer, deleteTimer, resetTimer, notificationsEnabled, toggleNotifications]);
+    inAppNotifications,
+    dismissInAppNotification,
+  }), [timers, currentTime, addTimerWithBackgroundNotifications, updateTimer, deleteTimer, resetTimer, notificationsEnabled, toggleNotifications, inAppNotifications, dismissInAppNotification]);
 });
