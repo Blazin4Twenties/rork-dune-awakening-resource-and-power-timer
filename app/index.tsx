@@ -102,6 +102,7 @@ export default function DuneResourceManager() {
   const [reminderIntervalUnit, setReminderIntervalUnit] = useState<"minutes" | "hours" | "days">("minutes");
   const [reminderMessage, setReminderMessage] = useState("");
   
+  // This useEffect must be called before any conditional returns
   useEffect(() => {
     // Only log on initial mount
     const logTimeout = setTimeout(() => {
@@ -121,6 +122,7 @@ export default function DuneResourceManager() {
     };
   }, []); // Empty dependency array - only run once on mount
 
+  // Helper functions and callbacks after hooks
   const formatCountdown = (ms: number) => {
     if (ms <= 0) return "EXPIRED";
     
