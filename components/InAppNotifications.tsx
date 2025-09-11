@@ -14,22 +14,38 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { useTimers } from "@/hooks/timer-context";
+import { useResources } from "@/hooks/resource-context";
 
 const { width } = Dimensions.get("window");
 
 export default function InAppNotifications() {
-  const { inAppNotifications, dismissInAppNotification } = useTimers();
+  const { inAppNotifications: timerNotifications, dismissInAppNotification: dismissTimerNotification } = useTimers();
+  const { inAppNotifications: resourceNotifications, dismissInAppNotification: dismissResourceNotification } = useResources();
   const insets = useSafeAreaInsets();
+
+  // Combine notifications from both contexts
+  const allNotifications = [
+    ...timerNotifications.map(n => ({ ...n, source: 'timer' as const })),
+    ...resourceNotifications.map(n => ({ ...n, source: 'resource' as const }))
+  ].sort((a, b) => b.timestamp - a.timestamp).slice(0, 5); // Show max 5 notifications
+
+  const handleDismiss = (id: string, source: 'timer' | 'resource') => {
+    if (source === 'timer') {
+      dismissTimerNotification(id);
+    } else {
+      dismissResourceNotification(id);
+    }
+  };
 
   return (
     <>
-      {inAppNotifications.map((notification, index) => (
+      {allNotifications.map((notification, index) => (
         <NotificationCard
-          key={notification.id}
+          key={`${notification.source}-${notification.id}`}
           notification={notification}
           index={index}
           topInset={insets.top}
-          onDismiss={() => dismissInAppNotification(notification.id)}
+          onDismiss={() => handleDismiss(notification.id, notification.source)}
         />
       ))}
     </>
@@ -42,6 +58,7 @@ interface NotificationCardProps {
     title: string;
     body: string;
     timestamp: number;
+    source: 'timer' | 'resource';
   };
   index: number;
   topInset: number;
@@ -97,8 +114,10 @@ function NotificationCard({ notification, index, topInset, onDismiss }: Notifica
     });
   };
 
-  const isUrgent = notification.title.includes("🚨") || notification.title.includes("⏰");
-  const isWarning = notification.title.includes("⚠️");
+  const isUrgent = notification.title.includes("🚨") || notification.title.includes("⏰") || 
+                   notification.title.includes("🔴") || notification.title.includes("🟠") ||
+                   notification.title.includes("💀");
+  const isWarning = notification.title.includes("⚠️") || notification.title.includes("⚡");
 
   return (
     <Animated.View

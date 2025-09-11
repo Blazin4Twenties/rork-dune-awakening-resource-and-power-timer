@@ -1,9 +1,15 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import createContextHook from "@nkzw/create-context-hook";
-import { Resource, PowerTimer } from "@/types/resource";
+import { Resource } from "@/types/resource";
+
+interface PowerTimer {
+  startTime: number;
+  endTime: number;
+  duration: number;
+}
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { Platform, AppState, Alert } from "react-native";
 
 const STORAGE_KEY = "dune_resources";
 const POWER_TIMER_KEY = "dune_power_timer";
@@ -29,9 +35,12 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
   const [resources, setResources] = useState<Resource[]>([]);
   const [powerTimer, setPowerTimerState] = useState<PowerTimer | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [inAppNotifications, setInAppNotifications] = useState<{ id: string; title: string; body: string; timestamp: number }[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const notificationHistory = useRef<Map<string, NotificationRecord>>(new Map());
   const lastPowerNotification = useRef<{ time: number; remaining: number }>({ time: 0, remaining: 0 });
+  const appStateRef = useRef(AppState.currentState);
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
 
   const getNotificationCooldown = (level: 'critical' | 'warning' | 'info'): number => {
     switch (level) {
@@ -42,8 +51,44 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
     }
   };
 
+  const sendInAppNotification = useCallback((title: string, body: string, requiresInteraction: boolean = false) => {
+    if (requiresInteraction && Platform.OS !== 'web') {
+      // Show alert that requires user interaction
+      Alert.alert(
+        title,
+        body,
+        [
+          {
+            text: "OK",
+            onPress: () => console.log("Resource notification acknowledged"),
+            style: "default"
+          }
+        ],
+        { cancelable: false }
+      );
+    } else {
+      // Show regular in-app notification
+      const notification = {
+        id: Date.now().toString(),
+        title,
+        body,
+        timestamp: Date.now()
+      };
+      setInAppNotifications(prev => [...prev, notification]);
+      
+      // Auto-remove after 5 seconds
+      setTimeout(() => {
+        setInAppNotifications(prev => prev.filter(n => n.id !== notification.id));
+      }, 5000);
+    }
+  }, []);
+
+  const dismissInAppNotification = useCallback((id: string) => {
+    setInAppNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
   const checkResourceThresholds = useCallback(async () => {
-    if (!notificationsEnabled || Platform.OS === "web") return;
+    if (!notificationsEnabled) return;
 
     const now = Date.now();
     const pendingNotifications: Array<{ title: string; body: string; priority: number }> = [];
@@ -52,48 +97,62 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
       const resourceKey = `resource-${resource.id}`;
       const history = notificationHistory.current.get(resourceKey);
       
-      if (resource.value <= resource.threshold) {
-        const percentage = Math.round((resource.value / resource.threshold) * 100);
+      // Check if resource needs resources_needed value
+      const needsAmount = resource.needed;
+      const currentAmount = resource.value;
+      const isLow = currentAmount < needsAmount;
+      
+      if (isLow) {
+        const percentage = Math.round((currentAmount / needsAmount) * 100);
         let level: 'critical' | 'warning' | 'info';
         let title: string;
         let body: string;
         let priority: number;
         
-        if (resource.value === 0) {
+        // Using resources_needed logic
+        if (currentAmount === 0) {
           level = 'critical';
           title = "🚨 Resource Depleted";
-          body = `${resource.name} is completely depleted!`;
+          body = `${resource.name}: 0/${needsAmount} - Completely depleted!`;
           priority = 1;
         } else if (percentage <= 25) {
           level = 'critical';
           title = "⚠️ Critical Resource Level";
-          body = `${resource.name}: ${resource.value} (${percentage}% of safe threshold)`;
+          body = `${resource.name}: ${currentAmount}/${needsAmount} - Need ${needsAmount - currentAmount} more`;
           priority = 1;
         } else if (percentage <= 50) {
           level = 'warning';
-          title = "⚡ Resource Warning";
-          body = `${resource.name} dropping: ${resource.value} remaining`;
+          title = "⚡ Resource Low";
+          body = `${resource.name}: ${currentAmount}/${needsAmount} - Gather ${needsAmount - currentAmount} more`;
           priority = 2;
-        } else {
+        } else if (percentage <= 75) {
           level = 'info';
           title = "📊 Resource Update";
-          body = `${resource.name}: ${resource.value} (approaching threshold)`;
+          body = `${resource.name}: ${currentAmount}/${needsAmount}`;
           priority = 3;
+        } else {
+          // Resource is close to or above needed amount - no notification needed
+          level = 'info';
+          title = "";
+          body = "";
+          priority = 4;
         }
         
-        const cooldown = getNotificationCooldown(level);
-        const shouldNotify = !history || 
-          now - history.lastNotified > cooldown || 
-          (history.level !== level && level === 'critical');
-        
-        if (shouldNotify) {
+        if (priority < 4) { // Only notify if priority is 1, 2, or 3
+          const cooldown = getNotificationCooldown(level);
+          const shouldNotify = !history || 
+            now - history.lastNotified > cooldown || 
+            (history.level !== level && level === 'critical');
+          
+          if (shouldNotify) {
           notificationHistory.current.set(resourceKey, {
             lastNotified: now,
             level,
             count: (history?.count || 0) + 1
           });
           
-          pendingNotifications.push({ title, body, priority });
+            pendingNotifications.push({ title, body, priority });
+          }
         }
       } else {
         // Resource recovered, clear history
@@ -101,8 +160,14 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
       }
     });
 
-    // Group and send notifications
-    if (pendingNotifications.length > 0) {
+    // Send notifications based on app state
+    if (pendingNotifications.length > 0 && isAppActive) {
+      // App is active - show in-app notifications
+      for (const notification of pendingNotifications) {
+        sendInAppNotification(notification.title, notification.body, notification.priority === 1);
+      }
+    } else if (pendingNotifications.length > 0 && Platform.OS !== "web") {
+      // App is in background - send system notifications
       pendingNotifications.sort((a, b) => a.priority - b.priority);
       
       if (pendingNotifications.length === 1) {
@@ -158,10 +223,10 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
         }
       }
     }
-  }, [resources, notificationsEnabled]);
+  }, [resources, notificationsEnabled, isAppActive, sendInAppNotification]);
 
   const checkPowerTimer = useCallback(async () => {
-    if (!notificationsEnabled || !powerTimer || Platform.OS === "web") return;
+    if (!notificationsEnabled || !powerTimer) return;
 
     const now = Date.now();
     const remaining = powerTimer.endTime - now;
@@ -232,18 +297,24 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
     }
     
     if (shouldNotify && timeSinceLastNotification >= minInterval) {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title,
-          body,
-          sound: remaining <= 60000, // Sound only for last minute
-          priority: remaining <= 30000 ? 'high' : 'default',
-        },
-        trigger: null,
-      });
+      if (isAppActive) {
+        // Show in-app notification
+        sendInAppNotification(title, body, remaining <= 30000);
+      } else if (Platform.OS !== "web") {
+        // Send system notification
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title,
+            body,
+            sound: remaining <= 60000, // Sound only for last minute
+            priority: remaining <= 30000 ? 'high' : 'default',
+          },
+          trigger: null,
+        });
+      }
       lastPowerNotification.current = { time: now, remaining };
     }
-  }, [powerTimer, notificationsEnabled]);
+  }, [powerTimer, notificationsEnabled, isAppActive, sendInAppNotification]);
 
   const requestNotificationPermissions = useCallback(async () => {
     if (Platform.OS === "web") return;
@@ -313,7 +384,7 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
       
       // Check if any resources are critical
       const hasCritical = resources.some(r => 
-        r.threshold > 0 && r.value <= r.threshold * 0.25
+        r.needed > 0 && r.value <= r.needed * 0.25
       );
       
       if (hasCritical) return 3000; // Critical resources: check every 3 seconds
@@ -362,8 +433,8 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
     );
     saveResources(updatedResources);
     
-    if (updates.value && updates.threshold) {
-      if (updates.value > updates.threshold) {
+    if (updates.value && updates.needed) {
+      if (updates.value >= updates.needed) {
         notificationHistory.current.delete(`resource-${id}`);
       }
     }
@@ -396,7 +467,87 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
   useEffect(() => {
     loadData();
     requestNotificationPermissions();
+    
+    // Track app state changes
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      appStateRef.current = nextAppState;
+      setIsAppActive(nextAppState === 'active');
+    });
+    
+    return () => {
+      subscription.remove();
+    };
   }, [loadData, requestNotificationPermissions]);
+  
+  // Schedule persistent notifications when app goes to background
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    
+    const handleAppStateChange = async (nextAppState: string) => {
+      if (appStateRef.current === 'active' && nextAppState.match(/inactive|background/)) {
+        // App is going to background - schedule notifications for resources
+        for (const resource of resources) {
+          const needsAmount = resource.needed;
+          const currentAmount = resource.value;
+          const isLow = currentAmount < needsAmount;
+          
+          if (isLow) {
+            const displayText = `${currentAmount}/${needsAmount} - Need ${needsAmount - currentAmount} more`;
+            
+            // Schedule periodic check notifications
+            await Notifications.scheduleNotificationAsync({
+              content: {
+                title: `📊 ${resource.name} Status`,
+                body: displayText,
+                sound: false,
+                data: { type: 'resource-background', resourceId: resource.id },
+              },
+              trigger: {
+                type: 'timeInterval',
+                seconds: 300, // Every 5 minutes
+                repeats: true,
+              } as Notifications.TimeIntervalTriggerInput,
+            });
+          }
+        }
+        
+        // Schedule power timer notifications if active
+        if (powerTimer) {
+          const remaining = powerTimer.endTime - Date.now();
+          if (remaining > 0) {
+            const intervals = [60, 120, 300, 600]; // 1, 2, 5, 10 minutes
+            
+            for (const seconds of intervals) {
+              if (seconds * 1000 < remaining) {
+                await Notifications.scheduleNotificationAsync({
+                  content: {
+                    title: `⚡ Power Status`,
+                    body: `Check your power timer`,
+                    sound: false,
+                    data: { type: 'power-background' },
+                  },
+                  trigger: {
+                    type: 'timeInterval',
+                    seconds,
+                    repeats: false,
+                  } as Notifications.TimeIntervalTriggerInput,
+                });
+              }
+            }
+          }
+        }
+      } else if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        // App is coming to foreground - cancel background notifications
+        await Notifications.cancelAllScheduledNotificationsAsync();
+      }
+    };
+    
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    
+    return () => {
+      subscription.remove();
+    };
+  }, [resources, powerTimer]);
 
   return useMemo(() => ({
     resources,
@@ -407,5 +558,7 @@ export const [ResourceProvider, useResources] = createContextHook(() => {
     setPowerTimer,
     notificationsEnabled,
     toggleNotifications,
-  }), [resources, powerTimer, addResource, updateResource, deleteResource, setPowerTimer, notificationsEnabled, toggleNotifications]);
+    inAppNotifications,
+    dismissInAppNotification,
+  }), [resources, powerTimer, addResource, updateResource, deleteResource, setPowerTimer, notificationsEnabled, toggleNotifications, inAppNotifications, dismissInAppNotification]);
 });

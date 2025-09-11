@@ -387,50 +387,104 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     };
   }, [loadData, requestNotificationPermissions]);
 
-  // Schedule background notifications for reminders when app is closed
-  const scheduleBackgroundReminders = useCallback(async (timer: Timer) => {
-    if (!timer.reminder?.enabled || Platform.OS === "web") return;
-    
-    // Cancel existing scheduled notifications for this timer
-    await Notifications.cancelAllScheduledNotificationsAsync();
+  // Schedule persistent notifications for timers
+  const scheduleTimerNotifications = useCallback(async (timer: Timer) => {
+    if (Platform.OS === "web") return;
     
     const now = Date.now();
     const endTime = timer.endTime;
-    const interval = timer.reminder.interval;
+    const remaining = endTime - now;
     
-    // Schedule up to 10 reminder notifications
-    const maxReminders = 10;
-    let nextReminderTime = now + interval;
-    let scheduledCount = 0;
+    if (remaining <= 0) return;
     
-    while (nextReminderTime < endTime && scheduledCount < maxReminders) {
-      const remaining = endTime - nextReminderTime;
-      const hours = Math.floor(remaining / 3600000);
-      const minutes = Math.floor((remaining % 3600000) / 60000);
-      
-      let timeStr = "";
-      if (hours > 0) timeStr += `${hours}h `;
-      if (minutes > 0) timeStr += `${minutes}m`;
-      
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: `⏱️ ${timer.name} Reminder`,
-          body: timer.reminder.message || `${timeStr.trim()} remaining on your timer`,
-          sound: true,
-          data: { type: 'timer-reminder', timerId: timer.id },
-        },
-        trigger: {
-          date: nextReminderTime,
-        } as Notifications.DateTriggerInput,
-      });
-      
-      nextReminderTime += interval;
-      scheduledCount++;
+    // Schedule countdown notifications at key intervals
+    const intervals = [
+      { time: 10000, label: "10 seconds" },
+      { time: 30000, label: "30 seconds" },
+      { time: 60000, label: "1 minute" },
+      { time: 120000, label: "2 minutes" },
+      { time: 300000, label: "5 minutes" },
+      { time: 600000, label: "10 minutes" },
+      { time: 1800000, label: "30 minutes" },
+      { time: 3600000, label: "1 hour" },
+    ];
+    
+    // Schedule notifications for each interval that hasn't passed
+    for (const interval of intervals) {
+      if (remaining > interval.time) {
+        const triggerTime = endTime - interval.time;
+        if (triggerTime > now) {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: `⏱️ ${timer.name}`,
+              body: `${interval.label} remaining`,
+              sound: interval.time <= 60000,
+              priority: interval.time <= 30000 ? 'high' : 'default',
+              data: { 
+                type: 'timer-countdown',
+                timerId: timer.id,
+                remaining: interval.time
+              },
+            },
+            trigger: {
+              type: 'date',
+              date: triggerTime,
+            } as Notifications.DateTriggerInput,
+          });
+        }
+      }
+    }
+    
+    // Schedule expiration notification
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `⏰ ${timer.name} Expired`,
+        body: `Your ${timer.name} timer has expired!`,
+        sound: true,
+        priority: 'high',
+        data: { type: 'timer-expired', timerId: timer.id },
+      },
+      trigger: {
+        type: 'date',
+        date: endTime,
+      } as Notifications.DateTriggerInput,
+    });
+    
+    // Schedule reminder notifications if enabled
+    if (timer.reminder?.enabled && timer.reminder.interval > 0) {
+      const maxReminders = Math.min(10, Math.floor(remaining / timer.reminder.interval));
+      for (let i = 1; i <= maxReminders; i++) {
+        const reminderTime = now + (timer.reminder.interval * i);
+        if (reminderTime < endTime) {
+          const timeLeft = endTime - reminderTime;
+          const hours = Math.floor(timeLeft / 3600000);
+          const minutes = Math.floor((timeLeft % 3600000) / 60000);
+          const seconds = Math.floor((timeLeft % 60000) / 1000);
+          
+          let timeStr = "";
+          if (hours > 0) timeStr += `${hours}h `;
+          if (minutes > 0) timeStr += `${minutes}m `;
+          if (seconds > 0 && hours === 0) timeStr += `${seconds}s`;
+          
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: `⏱️ ${timer.name} Reminder`,
+              body: timer.reminder.message || `${timeStr.trim()} remaining`,
+              sound: true,
+              data: { type: 'timer-reminder', timerId: timer.id },
+            },
+            trigger: {
+              type: 'date',
+              date: reminderTime,
+            } as Notifications.DateTriggerInput,
+          });
+        }
+      }
     }
   }, []);
 
-  // Update addTimer to schedule background notifications
-  const addTimerWithBackgroundNotifications = useCallback(async (timer: Omit<Timer, "id" | "startTime" | "endTime" | "isActive">, days: number, hours: number, minutes: number, seconds: number) => {
+  // Enhanced addTimer with persistent notifications
+  const addTimerWithNotifications = useCallback(async (timer: Omit<Timer, "id" | "startTime" | "endTime" | "isActive">, days: number, hours: number, minutes: number, seconds: number) => {
     const duration = ((days * 24 + hours) * 60 + minutes) * 60 * 1000 + seconds * 1000;
     const newTimer: Timer = {
       ...timer,
@@ -443,22 +497,133 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     const updatedTimers = [...timers, newTimer];
     saveTimers(updatedTimers);
     
-    // Schedule background notifications if reminder is enabled
-    if (newTimer.reminder?.enabled) {
-      await scheduleBackgroundReminders(newTimer);
+    // Schedule all notifications for this timer
+    await scheduleTimerNotifications(newTimer);
+  }, [timers, saveTimers, scheduleTimerNotifications]);
+  
+  // Enhanced updateTimer with notification rescheduling
+  const updateTimerWithNotifications = useCallback(async (id: string, days: number, hours: number, minutes: number, seconds: number) => {
+    const duration = ((days * 24 + hours) * 60 + minutes) * 60 * 1000 + seconds * 1000;
+    const updatedTimer: Timer = {
+      ...timers.find(t => t.id === id)!,
+      startTime: Date.now(),
+      endTime: Date.now() + duration,
+      duration,
+      isActive: true
+    };
+    
+    const updatedTimers = timers.map((t) =>
+      t.id === id ? updatedTimer : t
+    );
+    saveTimers(updatedTimers);
+    
+    // Clear old notifications and schedule new ones
+    notificationHistory.current.delete(`timer-${id}`);
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    
+    // Reschedule for all active timers
+    for (const timer of updatedTimers) {
+      if (timer.isActive) {
+        await scheduleTimerNotifications(timer);
+      }
     }
-  }, [timers, saveTimers, scheduleBackgroundReminders]);
+  }, [timers, saveTimers, scheduleTimerNotifications]);
+  
+  // Enhanced resetTimer with notification handling
+  const resetTimerWithNotifications = useCallback(async (id: string) => {
+    const timer = timers.find(t => t.id === id);
+    if (timer) {
+      const resetTimer: Timer = {
+        ...timer,
+        startTime: Date.now(),
+        endTime: Date.now() + timer.duration,
+        isActive: true
+      };
+      
+      const updatedTimers = timers.map((t) =>
+        t.id === id ? resetTimer : t
+      );
+      saveTimers(updatedTimers);
+      notificationHistory.current.delete(`timer-${id}`);
+      
+      // Reschedule notifications
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      for (const t of updatedTimers) {
+        if (t.isActive) {
+          await scheduleTimerNotifications(t);
+        }
+      }
+    }
+  }, [timers, saveTimers, scheduleTimerNotifications]);
 
+  // Schedule repeating notifications for active timers when app goes to background
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    
+    const handleAppStateChange = async (nextAppState: string) => {
+      if (appStateRef.current === 'active' && nextAppState.match(/inactive|background/)) {
+        // App is going to background - schedule notifications for all active timers
+        const activeTimers = timers.filter(t => t.isActive);
+        
+        for (const timer of activeTimers) {
+          const remaining = timer.endTime - Date.now();
+          if (remaining > 0) {
+            // Schedule multiple notifications at intervals
+            const notificationIntervals = [
+              { delay: 60000, label: '1 minute' },
+              { delay: 120000, label: '2 minutes' },
+              { delay: 180000, label: '3 minutes' },
+              { delay: 300000, label: '5 minutes' },
+              { delay: 600000, label: '10 minutes' },
+            ];
+            
+            for (const interval of notificationIntervals) {
+              if (interval.delay < remaining) {
+                const timeLeft = remaining - interval.delay;
+                const minutes = Math.floor(timeLeft / 60000);
+                const seconds = Math.floor((timeLeft % 60000) / 1000);
+                
+                await Notifications.scheduleNotificationAsync({
+                  content: {
+                    title: `⏱️ ${timer.name} Active`,
+                    body: `${minutes}m ${seconds}s remaining`,
+                    sound: timeLeft <= 60000,
+                    priority: timeLeft <= 60000 ? 'high' : 'default',
+                    data: { type: 'timer-background', timerId: timer.id },
+                  },
+                  trigger: {
+                    type: 'timeInterval',
+                    seconds: interval.delay / 1000,
+                    repeats: false,
+                  } as Notifications.TimeIntervalTriggerInput,
+                });
+              }
+            }
+          }
+        }
+      } else if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        // App is coming to foreground - cancel scheduled notifications
+        await Notifications.cancelAllScheduledNotificationsAsync();
+      }
+    };
+    
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    
+    return () => {
+      subscription.remove();
+    };
+  }, [timers]);
+  
   return useMemo(() => ({
     timers,
     currentTime,
-    addTimer: addTimerWithBackgroundNotifications,
-    updateTimer,
+    addTimer: addTimerWithNotifications,
+    updateTimer: updateTimerWithNotifications,
     deleteTimer,
-    resetTimer,
+    resetTimer: resetTimerWithNotifications,
     notificationsEnabled,
     toggleNotifications,
     inAppNotifications,
     dismissInAppNotification,
-  }), [timers, currentTime, addTimerWithBackgroundNotifications, updateTimer, deleteTimer, resetTimer, notificationsEnabled, toggleNotifications, inAppNotifications, dismissInAppNotification]);
+  }), [timers, currentTime, addTimerWithNotifications, updateTimerWithNotifications, deleteTimer, resetTimerWithNotifications, notificationsEnabled, toggleNotifications, inAppNotifications, dismissInAppNotification]);
 });
