@@ -387,7 +387,7 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     };
   }, [loadData, requestNotificationPermissions]);
 
-  // Schedule persistent notifications for timers
+  // Schedule persistent notifications for timers with more frequent updates
   const scheduleTimerNotifications = useCallback(async (timer: Timer) => {
     if (Platform.OS === "web") return;
     
@@ -397,17 +397,34 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     
     if (remaining <= 0) return;
     
-    // Schedule countdown notifications at key intervals
-    const intervals = [
-      { time: 10000, label: "10 seconds" },
-      { time: 30000, label: "30 seconds" },
-      { time: 60000, label: "1 minute" },
-      { time: 120000, label: "2 minutes" },
-      { time: 300000, label: "5 minutes" },
-      { time: 600000, label: "10 minutes" },
-      { time: 1800000, label: "30 minutes" },
-      { time: 3600000, label: "1 hour" },
-    ];
+    // Schedule more frequent countdown notifications for iOS live countdown effect
+    const intervals: { time: number; label: string }[] = [];
+    
+    // Add notifications every 10 seconds for the last minute
+    for (let i = 10000; i <= 60000; i += 10000) {
+      const seconds = i / 1000;
+      intervals.push({ time: i, label: `${seconds} seconds` });
+    }
+    
+    // Add notifications every 30 seconds for 1-5 minutes
+    for (let i = 90000; i <= 300000; i += 30000) {
+      const minutes = Math.floor(i / 60000);
+      const seconds = (i % 60000) / 1000;
+      const label = seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes} minute${minutes > 1 ? 's' : ''}`;
+      intervals.push({ time: i, label });
+    }
+    
+    // Add notifications every minute for 5-30 minutes
+    for (let i = 360000; i <= 1800000; i += 60000) {
+      const minutes = i / 60000;
+      intervals.push({ time: i, label: `${minutes} minutes` });
+    }
+    
+    // Add notifications every 5 minutes for 30 minutes to 1 hour
+    for (let i = 2100000; i <= 3600000; i += 300000) {
+      const minutes = i / 60000;
+      intervals.push({ time: i, label: `${minutes} minutes` });
+    }
     
     // Schedule notifications for each interval that hasn't passed
     for (const interval of intervals) {
@@ -565,38 +582,44 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
         // App is going to background - schedule notifications for all active timers
         const activeTimers = timers.filter(t => t.isActive);
         
+        // Cancel existing scheduled notifications first
+        await Notifications.cancelAllScheduledNotificationsAsync();
+        
         for (const timer of activeTimers) {
           const remaining = timer.endTime - Date.now();
           if (remaining > 0) {
-            // Schedule multiple notifications at intervals
-            const notificationIntervals = [
-              { delay: 60000, label: '1 minute' },
-              { delay: 120000, label: '2 minutes' },
-              { delay: 180000, label: '3 minutes' },
-              { delay: 300000, label: '5 minutes' },
-              { delay: 600000, label: '10 minutes' },
-            ];
+            // Schedule countdown notifications at specific times
+            await scheduleTimerNotifications(timer);
             
-            for (const interval of notificationIntervals) {
-              if (interval.delay < remaining) {
-                const timeLeft = remaining - interval.delay;
-                const minutes = Math.floor(timeLeft / 60000);
-                const seconds = Math.floor((timeLeft % 60000) / 1000);
+            // For iOS, also schedule more frequent updates for live countdown effect
+            if (Platform.OS === 'ios' && remaining <= 300000) { // Last 5 minutes
+              // Schedule notifications every 5 seconds for the last 5 minutes
+              const updateInterval = 5000; // 5 seconds
+              const numUpdates = Math.min(60, Math.floor(remaining / updateInterval));
+              
+              for (let i = 1; i <= numUpdates; i++) {
+                const notificationTime = Date.now() + (i * updateInterval);
+                const timeLeft = timer.endTime - notificationTime;
                 
-                await Notifications.scheduleNotificationAsync({
-                  content: {
-                    title: `⏱️ ${timer.name} Active`,
-                    body: `${minutes}m ${seconds}s remaining`,
-                    sound: timeLeft <= 60000,
-                    priority: timeLeft <= 60000 ? 'high' : 'default',
-                    data: { type: 'timer-background', timerId: timer.id },
-                  },
-                  trigger: {
-                    type: 'timeInterval',
-                    seconds: interval.delay / 1000,
-                    repeats: false,
-                  } as Notifications.TimeIntervalTriggerInput,
-                });
+                if (timeLeft > 0) {
+                  const minutes = Math.floor(timeLeft / 60000);
+                  const seconds = Math.floor((timeLeft % 60000) / 1000);
+                  const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+                  
+                  await Notifications.scheduleNotificationAsync({
+                    content: {
+                      title: `⏱️ ${timer.name}`,
+                      body: `${timeStr} remaining`,
+                      sound: false, // Don't play sound for frequent updates
+                      priority: timeLeft <= 30000 ? 'high' : 'default',
+                      data: { type: 'timer-live', timerId: timer.id },
+                    },
+                    trigger: {
+                      type: 'date',
+                      date: notificationTime,
+                    } as Notifications.DateTriggerInput,
+                  });
+                }
               }
             }
           }
@@ -612,7 +635,7 @@ export const [TimerProvider, useTimers] = createContextHook(() => {
     return () => {
       subscription.remove();
     };
-  }, [timers]);
+  }, [timers, scheduleTimerNotifications]);
   
   return useMemo(() => ({
     timers,
